@@ -1,0 +1,68 @@
+name: dropvault
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    image: ${DOCKERHUB_USERNAME:-dropvault-local}/dropvault-backend:1.0
+    restart: unless-stopped
+    environment: &backend_environment
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-0}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      MEDIA_ROOT: /app/uploads
+    volumes:
+      - uploaded_files:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  cleanup:
+    image: ${DOCKERHUB_USERNAME:-dropvault-local}/dropvault-backend:1.0
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend_environment
+    volumes:
+      - uploaded_files:/app/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "manage.py", "cleanup_expired", "--loop", "--interval", "60"]
+
+  nginx:
+    build: ./frontend
+    image: ${DOCKERHUB_USERNAME:-dropvault-local}/dropvault-frontend:1.0
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DROPVAULT_PORT:-8091}:80"
+
+volumes:
+  postgres_data:
+  uploaded_files:

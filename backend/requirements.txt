@@ -1,0 +1,4 @@
+Django>=5.2.8,<5.3
+djangorestframework>=3.16.0,<3.17
+psycopg[binary]>=3.2,<3.4
+gunicorn>=23,<24
